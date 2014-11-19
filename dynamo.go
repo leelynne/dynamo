@@ -65,7 +65,7 @@ func NewDynamo(region Region, options ...func(*Dynamo) error) (Dynamo, error) {
 		server:          dynamodb.Server{Auth: auth, Region: r},
 		compoundKeys:    true,
 		consistentReads: true,
-		getTableName:    func(t string) { return t },
+		getTableName:    func(t string) string { return t },
 	}
 	return d, nil
 }

@@ -57,6 +57,7 @@ func (scanOptions) OptLogger(l *log.Logger) func(*ScanRequest) error {
 			return errors.New("Logger cannot be nil")
 		}
 		sr.log = l
+		return nil
 	}
 }
 
@@ -94,7 +95,7 @@ func (d Dynamo) Scan(ctx context.Context, table string, options ...func(*ScanReq
 	errch := make(chan error, 1)
 	wg := sync.WaitGroup{}
 
-	scanCtxAll, cancelAll := context.WithCancel(ctx)
+	_, cancelAll := context.WithCancel(ctx)
 	for i := 0; i < routines; i++ {
 		wg.Add(1)
 		req.log.Printf("Scan segment %d starting", i)
@@ -122,7 +123,7 @@ func (d Dynamo) Scan(ctx context.Context, table string, options ...func(*ScanReq
 					}
 					select {
 					case unmarsh <- si:
-					case <-scanCtxAll.Done():
+					case <-segmentCtx.Done():
 						return
 					}
 					handled++

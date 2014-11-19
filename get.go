@@ -32,7 +32,7 @@ func (d Dynamo) Get(table, key string, val interface{}, options ...func(*GetRequ
 
 	if err != nil {
 		if err == dynamodb.ErrNotFound {
-			return ErrItemNotFound
+			return fmt.Errorf("Item '%s:%s not found.'", table, key)
 		}
 		return fmt.Errorf("Failed to get item '%s:%s - %s'", table, key, err)
 	}
