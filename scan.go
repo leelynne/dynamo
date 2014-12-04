@@ -17,6 +17,8 @@ type scanOptions struct{}
 // ScanOpts namespaces the ScanRequest options e.g. ScanOpts.MaxThroughput(30)
 var ScanOpts = scanOptions{}
 
+// ScanRequest holds options for a scan call.
+// Set options with ScanOpts.Opt*
 type ScanRequest struct {
 	// MaxThroughputConsumption as a percent described as an int. e.g. 50, 25
 	maxThroughputConsumption int
@@ -95,23 +97,23 @@ func (d Dynamo) Scan(ctx context.Context, table string, options ...func(*ScanReq
 	errch := make(chan error, 1)
 	wg := sync.WaitGroup{}
 
-	_, cancelAll := context.WithCancel(ctx)
 	for i := 0; i < routines; i++ {
 		wg.Add(1)
 		req.log.Printf("Scan segment %d starting", i)
 		go func(segment int) {
 			defer wg.Done()
-			segmentCtx, segmentCancel := context.WithCancel(ctx)
-			defer segmentCancel()
 
 			var lastKey *dynamodb.Key
 			for {
 				rawVals, nextKey, err := tbl.ParallelScanPartial([]dynamodb.AttributeComparison{}, lastKey, segment, routines)
 				lastKey = nextKey
 				if err != nil {
-					errch <- fmt.Errorf("Error starting parallel scan: %s", err)
-					cancelAll()
-					return
+					select {
+					case errch <- fmt.Errorf("Error starting parallel scan: %s", err):
+						return
+					case <-ctx.Done():
+						return
+					}
 				}
 				handled := 0
 				for _, attrs := range rawVals {
@@ -123,7 +125,7 @@ func (d Dynamo) Scan(ctx context.Context, table string, options ...func(*ScanReq
 					}
 					select {
 					case unmarsh <- si:
-					case <-segmentCtx.Done():
+					case <-ctx.Done():
 						return
 					}
 					handled++

@@ -4,4 +4,4 @@ package dynamo
 type Region string
 
 // US-West-2 region in Oregon
-const USWest2 = "https://dynamodb.us-west-2.amazonaws.com"
+const USWest2 = "us-west-2"

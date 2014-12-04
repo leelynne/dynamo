@@ -10,12 +10,20 @@ import (
 	"github.com/crowdmob/goamz/dynamodb"
 )
 
+// Dynamo
 type Dynamo struct {
-	auth            aws.Auth
-	server          dynamodb.Server
+	Auth            aws.Auth
+	Server          dynamodb.Server
 	compoundKeys    bool
 	consistentReads bool
 	getTableName    ProcessTableName
+	credz           credentials
+}
+
+type credentials struct {
+	accessKey string
+	secretKey string
+	token     string
 }
 
 // ProcessTableName allows manipulation of the table name queried.
@@ -41,36 +49,58 @@ func OptConsistentReads(cr bool) func(*Dynamo) error {
 	}
 }
 
-func NewDynamo(region Region, options ...func(*Dynamo) error) (Dynamo, error) {
+// OptCredentials sets the AWS credentials.  The default AWS lookup is usually sufficient.
+func OptCredentials(accessKey, secretKey, token string) func(*Dynamo) error {
+	return func(d *Dynamo) error {
+		d.credz = credentials{accessKey, secretKey, token}
+		return nil
+	}
+}
+
+// OptProcessTableName allows setting of a function to manipulate the table name used by dynamo.
+func OptProcessTableName(tbName ProcessTableName) func(*Dynamo) error {
+	return func(d *Dynamo) error {
+		d.getTableName = tbName
+		return nil
+	}
+}
+
+// NewDynamo creates a new instance of Dynamo
+func NewDynamo(region Region, options ...func(*Dynamo) error) (*Dynamo, error) {
 	if region == "" {
-		return Dynamo{}, errors.New("No region/endpoint specified.")
+		return nil, errors.New("No region/endpoint specified.")
 	}
 	var r aws.Region
 	if strings.Contains(string(region), "http") {
 		r = aws.Region{DynamoDBEndpoint: string(region)}
-
 	} else {
 		r = aws.Regions[string(region)]
+
 		if r.DynamoDBEndpoint == "" {
-			return Dynamo{}, fmt.Errorf("%s is not a valid region", region)
+			return nil, fmt.Errorf("%s is not a valid region", region)
 		}
 	}
 
-	auth, err := aws.GetAuth("", "", "", time.Now())
-	if err != nil {
-		return Dynamo{}, err
-	}
 	d := Dynamo{
-		auth:            auth,
-		server:          dynamodb.Server{Auth: auth, Region: r},
-		compoundKeys:    true,
+		compoundKeys:    false,
 		consistentReads: true,
 		getTableName:    func(t string) string { return t },
 	}
-	return d, nil
+	err := d.applyOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	auth, err := aws.GetAuth(d.credz.accessKey, d.credz.secretKey, d.credz.token, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	d.Auth = auth
+	d.Server = dynamodb.Server{Auth: auth, Region: r}
+	return &d, nil
 }
 
-func (d Dynamo) Save(table, key string, val interface{}) error {
+func (d *Dynamo) Save(table, key string, val interface{}) error {
 	attrs, err := dynamodb.MarshalAttributes(val)
 	if err != nil {
 		return fmt.Errorf("Failed to marshall attributes: %s", err)
@@ -91,26 +121,65 @@ func (d Dynamo) Save(table, key string, val interface{}) error {
 	return nil
 }
 
+func (d *Dynamo) applyOptions(options []func(*Dynamo) error) error {
+	for _, option := range options {
+		err := option(d)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // scanSettings are the settings based on analyzing the tables
 // size and configured throughput
 
-func (d Dynamo) calcScanRoutines(tb *dynamodb.Table) int {
+func (d *Dynamo) calcScanRoutines(tb *dynamodb.Table) int {
 	return 2
 }
 
-func (d Dynamo) getTable(rawName string) (tbl *dynamodb.Table, itemCount int, err error) {
+type Schema struct {
+	TableName string
+	Key       string
+	RangeKey  string
+}
+
+func (d *Dynamo) TableSchema(tableName string) (Schema, error) {
+	tName := d.getTableName(tableName)
+	tableDesc, err := d.Server.DescribeTable(tName)
+	if err != nil {
+		return Schema{}, fmt.Errorf("Failure describing table '%s - %s'.", tName, err)
+	}
+	pkey, err := tableDesc.BuildPrimaryKey()
+	if err != nil {
+		return Schema{}, fmt.Errorf("Failure getting primary key from table '%s - %s'", tName, err)
+	}
+
+	rkey := ""
+	if pkey.HasRange() {
+		rkey = pkey.RangeAttribute.Name
+	}
+	return Schema{
+		TableName: tName,
+		Key:       pkey.KeyAttribute.Name,
+		RangeKey:  rkey,
+	}, nil
+}
+
+func (d *Dynamo) getTable(rawName string) (tbl *dynamodb.Table, itemCount int, err error) {
 	tName := d.getTableName(rawName)
 	// Having to run a describe table just to get a Table instance is terrible
-	tableDesc, err := d.server.DescribeTable(tName)
-	itemCount = int(tableDesc.ItemCount)
+	tableDesc, err := d.Server.DescribeTable(tName)
 	if err != nil {
 		return nil, itemCount, fmt.Errorf("Failure describing table '%s - %s'.", tName, err)
 	}
+
+	itemCount = int(tableDesc.ItemCount)
 	pkey, err := tableDesc.BuildPrimaryKey()
 	if err != nil {
 		return nil, itemCount, fmt.Errorf("Failure getting primary key from table '%s - %s'", tName, err)
 	}
-	return d.server.NewTable(tName, pkey), itemCount, nil
+	return d.Server.NewTable(tName, pkey), itemCount, nil
 }
 
 type keyParts struct {
