@@ -67,18 +67,17 @@ func OptProcessTableName(tbName ProcessTableName) func(*Dynamo) error {
 
 // NewDynamo creates a new instance of Dynamo
 func NewDynamo(region Region, options ...func(*Dynamo) error) (*Dynamo, error) {
-	if region == "" {
+	if region.Address == "" {
 		return nil, errors.New("No region/endpoint specified.")
 	}
 	var r aws.Region
-	if strings.Contains(string(region), "http") {
-		r = aws.Region{DynamoDBEndpoint: string(region)}
+	if strings.Contains(region.Address, "localhost") {
+		r = aws.Region{Name: "localhost", DynamoDBEndpoint: region.Address}
 	} else {
-		r = aws.Regions[string(region)]
-
-		if r.DynamoDBEndpoint == "" {
-			return nil, fmt.Errorf("%s is not a valid region", region)
-		}
+		r = aws.Regions[region.Name]
+	}
+	if r.Name == "" {
+		return nil, fmt.Errorf("%s is not a valid region", region.Name)
 	}
 
 	d := Dynamo{
