@@ -7,9 +7,8 @@ import (
 	"os"
 	"sync"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/crowdmob/goamz/dynamodb"
+	"golang.org/x/net/context"
 )
 
 type scanOptions struct{}
